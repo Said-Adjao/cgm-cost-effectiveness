@@ -1,0 +1,301 @@
+---
+title: "Cost-Effectiveness of Continuous Glucose Monitoring vs. Blood Glucose Monitoring in Non-Insulin-Treated Type 2 Diabetes"
+subtitle: "A Markov model with UKPDS-derived risk scaling, deterministic and probabilistic sensitivity analysis"
+author: "Said Adjao"
+date: today
+format:
+  html:
+    toc: true
+    number-sections: true
+    embed-resources: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+
+library(tidyverse)
+
+n_cycles <- 20
+discount <- 0.03
+states   <- c("Stable", "Complication", "Dead")
+disc     <- 1 / (1 + discount)^(0:n_cycles)
+
+md_hba1c     <- 0.42     # meta-analysis MD, magnitude
+rrr_per_1pct <- 0.37     # UKPDS 35
+rrr_scaled   <- 1 - (1 - rrr_per_1pct)^(md_hba1c / 1.0)
+
+p_stable_comp_bgm <- 0.030
+p_stable_comp_cgm <- 0.030 * (1 - rrr_scaled)
+p_stable_death    <- 0.015
+p_comp_death      <- 0.025
+
+c_cgm <- 2500; c_comp <- 3000; c_stable <- 1500
+u_stable <- 0.87; u_comp <- 0.75
+
+make_tm <- function(p_event, p_sd, p_pd) {
+  matrix(c(1 - p_event - p_sd, p_event, p_sd,
+           0, 1 - p_pd, p_pd,
+           0, 0, 1),
+         nrow = 3, byrow = TRUE, dimnames = list(from = states, to = states))
+}
+run_markov <- function(tm, n_cycles) {
+  tr <- matrix(0, n_cycles + 1, 3, dimnames = list(cycle = 0:n_cycles, state = states))
+  tr[1, ] <- c(1000, 0, 0)
+  for (t in 1:n_cycles) tr[t + 1, ] <- tr[t, ] %*% tm
+  tr
+}
+tally <- function(trace, cost_vec, qaly_vec) {
+  cc <- (trace %*% cost_vec) / 1000
+  cq <- (trace %*% qaly_vec) / 1000
+  c(cost = sum(cc * disc), qaly = sum(cq * disc))
+}
+
+tm_bgm <- make_tm(p_stable_comp_bgm, p_stable_death, p_comp_death)
+tm_cgm <- make_tm(p_stable_comp_cgm, p_stable_death, p_comp_death)
+qaly_vec <- c(u_stable, u_comp, 0)
+cost_bgm <- c(c_stable, c_comp, 0)
+cost_cgm <- c(c_stable + c_cgm, c_comp + c_cgm, 0)
+
+res_bgm <- tally(run_markov(tm_bgm, n_cycles), cost_bgm, qaly_vec)
+res_cgm <- tally(run_markov(tm_cgm, n_cycles), cost_cgm, qaly_vec)
+d_cost_base <- res_cgm["cost"] - res_bgm["cost"]
+d_qaly_base <- res_cgm["qaly"] - res_bgm["qaly"]
+icer_base   <- d_cost_base / d_qaly_base
+```
+
+## Summary
+
+This analysis evaluates the cost-effectiveness of continuous glucose monitoring
+(CGM) versus blood glucose monitoring (BGM) in adults with type 2 diabetes not
+treated with insulin. Unlike a direct clinical-event reduction, CGM's benefit
+was modeled through a surrogate pathway: an independent meta-analysis estimated
+CGM's effect on HbA1c (mean difference −0.42%), scaled to a microvascular
+complication risk reduction using the dose-response relationship from UKPDS 35.
+
+At a base-case annual cost of \$`r format(c_cgm, big.mark=",")`, the ICER was
+**\$`r format(round(icer_base), big.mark=",")` per QALY** — exceeding the US
+willingness-to-pay threshold and representing weaker value than a comparable
+direct-acting therapeutic (SGLT2 inhibitors) modeled on the same framework.
+
+## Background
+
+CGM is a monitoring technology rather than a therapeutic agent: its value
+depends on translating improved glycemic visibility into better long-term
+outcomes via glucose control. This creates a structurally different economic
+case than a drug with a directly measured clinical-event benefit, and this
+analysis quantifies that difference explicitly.
+
+## Methods
+
+### From surrogate outcome to health states
+
+CGM's treatment effect enters the model in two steps. First, an independent
+meta-analysis of 8 RCTs estimated CGM's effect on HbA1c (MD −0.42%, 95% CI
+−0.59 to −0.25). Second, this reduction was translated into a relative risk
+reduction for microvascular complications using UKPDS 35, which found each 1%
+absolute HbA1c reduction associated with a 37% (95% CI 33–41%) reduction in
+microvascular complication risk, with no observed threshold. Scaling
+exponentially to −0.42% yields a relative risk reduction of
+**`r round(rrr_scaled * 100, 1)`%**, applied to the Stable→Complication
+transition probability.
+
+### Model structure
+
+A three-state Markov model (Stable; Complication; Dead), `r n_cycles` annual
+cycles, 3% discounting, mirrors the structure used for the companion SGLT2
+inhibitor analysis.
+
+```{r}
+#| label: param-table
+
+tibble(
+  Parameter = c("HbA1c mean difference (CGM vs BGM)", "UKPDS RRR per 1% HbA1c",
+                "Scaled RRR at −0.42%", "Baseline complication rate (annual)",
+                "Background mortality (Stable)", "Mortality (Complication)",
+                "CGM annual cost", "Complication annual cost",
+                "Background care cost (Stable, annual)",
+                "Utility: Stable", "Utility: Complication",
+                "Discount rate", "Time horizon"),
+  Value = c("−0.42% (95% CI −0.59, −0.25)", "37% (95% CI 33–41%)",
+            paste0(round(rrr_scaled*100,1), "%"), "0.030", "0.015", "0.025",
+            "$2,500", "$3,000", "$1,500",
+            "0.87", "0.75", "3%", "20 years"),
+  Source = c("Meta-analysis (8 RCTs)", "UKPDS 35 (Stratton et al., BMJ 2000)",
+             "Calculated", "Illustrative", "Life tables", "Illustrative",
+             "Device pricing", "Costing study", "Illustrative",
+             "Utility study", "Utility study", "Convention", "—")
+) %>% knitr::kable(caption = "Base-case model inputs.")
+```
+
+## Results
+
+### Base case
+
+```{r}
+#| label: base-results
+
+tibble(
+  Arm = c("BGM", "CGM", "Incremental"),
+  Cost = c(res_bgm["cost"], res_cgm["cost"], d_cost_base),
+  QALYs = c(res_bgm["qaly"], res_cgm["qaly"], d_qaly_base)
+) %>%
+  mutate(Cost = paste0("$", format(round(Cost), big.mark=",")), QALYs = round(QALYs, 3)) %>%
+  knitr::kable(caption = "Base-case costs and QALYs per patient (discounted).")
+```
+
+Base-case ICER: **\$`r format(round(icer_base), big.mark=",")`/QALY**.
+
+### One-way sensitivity: UKPDS relationship
+
+```{r}
+#| label: owsa-ukpds
+
+run_icer_ukpds <- function(rrr1) {
+  rrr_s <- 1 - (1 - rrr1)^(md_hba1c / 1.0)
+  tm_c  <- make_tm(p_stable_comp_bgm * (1 - rrr_s), p_stable_death, p_comp_death)
+  rb <- tally(run_markov(tm_bgm, n_cycles), cost_bgm, qaly_vec)
+  rt <- tally(run_markov(tm_c,   n_cycles), cost_cgm, qaly_vec)
+  (rt["cost"] - rb["cost"]) / (rt["qaly"] - rb["qaly"])
+}
+tibble(Scenario = c("UKPDS low (33%)", "Base case (37%)", "UKPDS high (41%)"),
+       ICER = sapply(c(0.33, 0.37, 0.41), run_icer_ukpds)) %>%
+  mutate(ICER = paste0("$", format(round(ICER), big.mark=","))) %>%
+  knitr::kable(caption = "ICER across the UKPDS 95% CI.")
+```
+
+The conclusion is unaffected across the UKPDS confidence interval.
+
+### One-way sensitivity: CGM price
+
+```{r}
+#| label: owsa-price
+#| fig-width: 8
+#| fig-height: 4.5
+
+run_icer_price <- function(price) {
+  ct <- c(c_stable + price, c_comp + price, 0)
+  rb <- tally(run_markov(tm_bgm, n_cycles), cost_bgm, qaly_vec)
+  rt <- tally(run_markov(tm_cgm, n_cycles), ct, qaly_vec)
+  (rt["cost"] - rb["cost"]) / (rt["qaly"] - rb["qaly"])
+}
+prices <- seq(100, 2500, by = 100)
+price_df <- tibble(price = prices, icer = sapply(prices, run_icer_price))
+threshold_price <- approx(price_df$icer, price_df$price, xout = 150000)$y
+
+ggplot(price_df, aes(price, icer)) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  geom_hline(yintercept = 150000, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = threshold_price, linetype = "dotted") +
+  scale_x_continuous(labels = scales::dollar) + scale_y_continuous(labels = scales::dollar) +
+  labs(title = "ICER vs. Annual CGM Price", x = "Annual CGM cost", y = "ICER ($/QALY)") +
+  theme_minimal()
+```
+
+CGM reaches \$150,000/QALY at an annual price of approximately
+**\$`r format(round(threshold_price), big.mark=",")`** — a substantially larger
+price reduction (from \$`r format(c_cgm, big.mark=",")`) than required for the
+companion SGLT2 inhibitor model, reflecting the smaller absolute benefit
+achievable through the surrogate pathway.
+
+### Probabilistic sensitivity analysis
+
+```{r}
+#| label: psa
+#| fig-width: 8
+#| fig-height: 4.5
+
+set.seed(123)
+n_sims <- 5000
+md_se    <- (0.59 - 0.25) / (2 * 1.96)
+md_d     <- abs(rnorm(n_sims, 0.42, md_se))
+ukpds_se <- (0.41 - 0.33) / (2 * 1.96)
+ukpds_d  <- rnorm(n_sims, 0.37, ukpds_se)
+
+beta_params  <- function(m, n) list(a = m*n, b = (1-m)*n)
+gamma_params <- function(m, s) list(shape = (m/s)^2, rate = m/(s^2))
+pc_d  <- with(beta_params(0.030, 200), rbeta(n_sims, a, b))
+sd_d  <- with(beta_params(0.015, 200), rbeta(n_sims, a, b))
+pd_d  <- with(beta_params(0.025, 200), rbeta(n_sims, a, b))
+us_d  <- with(beta_params(0.87, 100),  rbeta(n_sims, a, b))
+uc_d  <- with(beta_params(0.75, 100),  rbeta(n_sims, a, b))
+ccg_d <- with(gamma_params(2500, 500), rgamma(n_sims, shape, rate))
+ccm_d <- with(gamma_params(3000, 600), rgamma(n_sims, shape, rate))
+cst_d <- with(gamma_params(1500, 300), rgamma(n_sims, shape, rate))
+
+psa_cgm <- tibble(d_cost = numeric(n_sims), d_qaly = numeric(n_sims))
+for (i in 1:n_sims) {
+  rrr_i <- max(0, min(1, 1 - (1 - ukpds_d[i])^(md_d[i] / 1.0)))
+  tm_b <- make_tm(pc_d[i], sd_d[i], pd_d[i])
+  tm_c <- make_tm(pc_d[i]*(1 - rrr_i), sd_d[i], pd_d[i])
+  qv <- c(us_d[i], uc_d[i], 0)
+  cb <- c(cst_d[i], ccm_d[i], 0)
+  cc <- c(cst_d[i]+ccg_d[i], ccm_d[i]+ccg_d[i], 0)
+  rb <- tally(run_markov(tm_b, n_cycles), cb, qv)
+  rt <- tally(run_markov(tm_c, n_cycles), cc, qv)
+  psa_cgm$d_cost[i] <- rt["cost"] - rb["cost"]
+  psa_cgm$d_qaly[i] <- rt["qaly"] - rb["qaly"]
+}
+p_150 <- round(100 * mean(psa_cgm$d_cost < 150000 * psa_cgm$d_qaly), 2)
+
+ggplot(psa_cgm, aes(d_qaly, d_cost)) +
+  geom_point(alpha = 0.12, color = "steelblue") +
+  geom_abline(slope = 150000, intercept = 0, linetype = "dashed", color = "red") +
+  scale_y_continuous(labels = scales::dollar) +
+  labs(title = "Cost-Effectiveness Plane (5,000 simulations)",
+       x = "Incremental QALYs", y = "Incremental Cost") + theme_minimal()
+```
+
+```{r}
+#| label: ceac
+#| fig-width: 8
+#| fig-height: 4.5
+
+thr <- seq(0, 500000, by = 10000)
+ceac <- tibble(wtp = thr, p = sapply(thr, function(w) mean(psa_cgm$d_cost < w * psa_cgm$d_qaly)))
+ggplot(ceac, aes(wtp, p)) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  geom_vline(xintercept = 150000, linetype = "dashed", color = "red") +
+  scale_x_continuous(labels = scales::dollar) + scale_y_continuous(labels = scales::percent, limits=c(0,1)) +
+  labs(title = "Cost-Effectiveness Acceptability Curve", x = "Willingness-to-pay ($/QALY)", y = "Probability cost-effective") +
+  theme_minimal()
+```
+
+PSA probability of cost-effectiveness at \$150,000/QALY: **`r p_150`%**.
+
+## Comparison to SGLT2 inhibitors
+
+Both interventions were modeled on the same Markov framework, but their
+mechanisms differ fundamentally: SGLT2 inhibitors reduce a directly measured
+clinical event (HF hospitalization); CGM's benefit is mediated through a
+surrogate marker requiring an additional risk-translation step. This is
+reflected in the results — CGM's ICER, threshold price gap, and PSA probability
+are all less favorable than SGLT2i's, despite both treatment effects being
+statistically robust in their respective meta-analyses. This illustrates that
+evidentiary certainty about effectiveness does not guarantee favorable
+cost-effectiveness; the causal pathway's directness materially affects economic
+value.
+
+## Limitations
+
+In addition to standard parameter uncertainty (tested via PSA), this model
+carries a structural assumption not captured by sensitivity analysis: the
+UKPDS 35 risk relationship derives from a 1977–1997 UK cohort, and its
+applicability to a contemporary population may differ. The model assumes
+linear, no-threshold scaling of risk reduction, consistent with UKPDS's own
+reported findings, but this remains an extrapolation beyond directly observed
+CGM trial data. As with the companion analysis, costs and utilities are
+illustrative.
+
+## Conclusion
+
+CGM reduces HbA1c with a well-established effect, but under base-case
+assumptions its cost-effectiveness for preventing microvascular complications
+in non-insulin-treated T2DM is substantially weaker than a comparable
+direct-acting therapy, driven by the indirectness of its benefit pathway
+rather than uncertainty in the underlying evidence.
+
+
