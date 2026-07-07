@@ -4,7 +4,7 @@ A reproducible Markov cost-effectiveness model in R/Quarto, with the treatment e
 
 ## Summary
 
-CGM's effect on HbA1c (MD −0.42%, from [companion meta-analysis](https://github.com/said-adjao/cgm-meta-analysis)) was translated into a ~17.6% relative risk reduction in microvascular complications using UKPDS 35's dose-response relationship (37% RRR per 1% HbA1c). Base-case ICER: **~$446,000/QALY** — above US thresholds, and less favorable than a comparable direct-acting therapy (see [SGLT2i cost-effectiveness model](https://github.com/said-adjao/sglt2-cost-effectiveness)). Robust to effectiveness uncertainty (PSA: ~1.5% probability cost-effective at $150k/QALY); driven by price and the indirectness of the surrogate-outcome pathway.
+CGM's effect on HbA1c (MD −0.42%, from [companion meta-analysis](https://github.com/said-adjao/cgm-meta-analysis)) was translated into a 17.6% relative risk reduction in microvascular complications using UKPDS 35's dose-response relationship (37% RRR per 1% HbA1c). Base-case ICER: **$446,000/QALY** — above US thresholds, and less favorable than a comparable direct-acting therapy (see [SGLT2i cost-effectiveness model](https://github.com/said-adjao/sglt2-cost-effectiveness)). Robust to effectiveness uncertainty (PSA: ~1.5% probability cost-effective at $150k/QALY); driven by price and the indirectness of the surrogate-outcome pathway.
 
 ## Methods
 - Three-state Markov model (Stable/Complication/Dead), 20-year horizon, 3% discounting
